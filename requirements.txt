@@ -1,6 +1,8 @@
+ddgs
 langchain
 langchain-core
 langchain-openai
 openai
 python-dotenv
+langchain-community
 langchain-groq
