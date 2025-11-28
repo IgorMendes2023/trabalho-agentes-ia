@@ -33,13 +33,7 @@ search = DuckDuckGoSearchRun()
 
 def buscar_noticias(state: State):
     query = state["input"]
-
-    state["tokens_prompt"] += contar_tokens(query)
-
     result = search.run(query)
-
-    state["tokens_completion"] += contar_tokens(result)
-
     state["news"] = result
     state["steps"].append("Buscou notícias")
     return state
@@ -54,14 +48,31 @@ def avaliar_sentimento(state: State):
     texto = state["news"]
 
     prompt = f"Classifique o sentimento como POSITIVE ou NEGATIVE:\n\n{texto}"
-    state["tokens_prompt"] += contar_tokens(prompt)
-
-    resposta = llm.invoke(prompt).content
-    state["tokens_completion"] += contar_tokens(resposta)
-
+    res = llm.invoke(prompt)
+    resposta = res.content
+    monitorar_tokens_de_resposta(state, res)
+    if not getattr(res, "usage_metadata", None):
+        state["tokens_prompt"] += contar_tokens(prompt)
     state["sentiment"] = resposta.strip()
     state["steps"].append("Classificou sentimento")
     return state
+
+
+def monitorar_tokens_de_resposta(state: State, message):
+    usage = getattr(message, "usage_metadata", None)
+    if usage:
+        state["tokens_prompt"] += int((usage.get("input_tokens") or 0))
+        state["tokens_completion"] += int((usage.get("output_tokens") or 0))
+        return
+    meta = getattr(message, "response_metadata", None)
+    if isinstance(meta, dict):
+        usage2 = meta.get("token_usage") or meta.get("usage")
+        if isinstance(usage2, dict):
+            state["tokens_prompt"] += int((usage2.get("prompt_tokens") or 0))
+            state["tokens_completion"] += int((usage2.get("completion_tokens") or 0))
+            return
+    content = getattr(message, "content", "")
+    state["tokens_completion"] += contar_tokens(content)
 
 
 # -------------------------------
