@@ -8,5 +8,3 @@ langchain-community
 langchain-groq
 tiktoken
 langgraph
-
-#teste
