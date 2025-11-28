@@ -6,3 +6,5 @@ openai
 python-dotenv
 langchain-community
 langchain-groq
+tiktoken
+langgraph
