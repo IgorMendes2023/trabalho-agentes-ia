@@ -3,6 +3,7 @@ from langchain_groq import ChatGroq
 from langchain_community.tools import DuckDuckGoSearchRun
 from langgraph.graph import StateGraph, END
 import tiktoken
+import time
 
 
 # -------------------------------
@@ -24,6 +25,7 @@ class State(TypedDict):
     tokens_prompt: int
     tokens_completion: int
     tokens_total: int
+    metrics: dict
 
 
 # -------------------------------
@@ -32,10 +34,13 @@ class State(TypedDict):
 search = DuckDuckGoSearchRun()
 
 def buscar_noticias(state: State):
+    t0 = time.perf_counter()
     query = state["input"]
     result = search.run(query)
+    t1 = time.perf_counter()
     state["news"] = result
     state["steps"].append("Buscou notícias")
+    state.setdefault("metrics", {})["buscar_noticias_ms"] = (t1 - t0) * 1000.0
     return state
 
 
@@ -45,15 +50,29 @@ def buscar_noticias(state: State):
 llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
 
 def avaliar_sentimento(state: State):
+    t0 = time.perf_counter()
     texto = state["news"]
-
     prompt = f"Classifique o sentimento como POSITIVE ou NEGATIVE:\n\n{texto}"
-    res = llm.invoke(prompt)
-    resposta = res.content
-    monitorar_tokens_de_resposta(state, res)
-    if not getattr(res, "usage_metadata", None):
-        state["tokens_prompt"] += contar_tokens(prompt)
-    state["sentiment"] = resposta.strip()
+    res = None
+    tentativa = 0
+    ultimo_erro = None
+    while tentativa < 3 and res is None:
+        try:
+            res = llm.invoke(prompt)
+        except Exception as e:
+            ultimo_erro = e
+            time.sleep(0.5 * (tentativa + 1))
+            tentativa += 1
+    if res is None:
+        state["sentiment"] = "ERROR"
+    else:
+        resposta = res.content
+        monitorar_tokens_de_resposta(state, res)
+        if not getattr(res, "usage_metadata", None):
+            state["tokens_prompt"] += contar_tokens(prompt)
+        state["sentiment"] = resposta.strip()
+    t1 = time.perf_counter()
+    state.setdefault("metrics", {})["avaliar_sentimento_ms"] = (t1 - t0) * 1000.0
     state["steps"].append("Classificou sentimento")
     return state
 
@@ -102,12 +121,16 @@ def executar_agente(consulta: str):
         "steps": [],
         "tokens_prompt": 0,
         "tokens_completion": 0,
-        "tokens_total": 0
+        "tokens_total": 0,
+        "metrics": {}
     }
 
+    t0 = time.perf_counter()
     result = app.invoke(state)
+    t1 = time.perf_counter()
 
     result["tokens_total"] = result["tokens_prompt"] + result["tokens_completion"]
+    result.setdefault("metrics", {})["total_ms"] = (t1 - t0) * 1000.0
 
     print("\n--- NOTÍCIA ENCONTRADA ---")
     print(result["news"])
@@ -123,8 +146,19 @@ def executar_agente(consulta: str):
     print(f"Completion tokens: {result['tokens_completion']}")
     print(f"Total tokens: {result['tokens_total']}")
 
+    m = result.get("metrics", {})
+    if m:
+        print("\n--- MÉTRICAS ---")
+        print(f"buscar_noticias_ms: {m.get('buscar_noticias_ms', 0):.2f}")
+        print(f"avaliar_sentimento_ms: {m.get('avaliar_sentimento_ms', 0):.2f}")
+        print(f"total_ms: {m.get('total_ms', 0):.2f}")
+
     return result
 
 
 if __name__ == "__main__":
-    executar_agente("Notícias sobre inflação no Brasil")
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("consulta", nargs="?", default="Notícias sobre inflação no Brasil")
+    args = p.parse_args()
+    executar_agente(args.consulta)
